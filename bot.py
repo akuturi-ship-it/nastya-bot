@@ -11,9 +11,8 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 
-# === Поиск на Wildberries ===
 async def search_wildberries(query: str, limit: int = 8):
-    url = "https://search.wb.ru/exactmatch/ru/common/v4/search"
+    url = "https://search.wb.ru/exactmatch/ru/common/v18/search"
     params = {
         "query": query,
         "resultset": "catalog",
@@ -21,19 +20,22 @@ async def search_wildberries(query: str, limit: int = 8):
         "page": 1,
         "appType": 1,
         "curr": "rub",
-        "dest": -1257786,  # Москва
+        "dest": -1257786,
         "sort": "popular",
         "spp": 30
     }
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     }
     
     async with aiohttp.ClientSession() as session:
         async with session.get(url, params=params, headers=headers) as resp:
             if resp.status != 200:
-                return []
+                text = await resp.text()
+                raise Exception(f"{resp.status}: {text[:200]}")
             data = await resp.json()
             
     products = data.get("data", {}).get("products", [])
@@ -104,7 +106,6 @@ async def search_handler(message: types.Message):
                 f"<a href='{p['link']}'>Открыть на WB</a>\n\n"
             )
         
-        # Ссылка на Ozon
         ozon_link = f"https://www.ozon.ru/search/?text={quote(query)}"
         text += f"——————\n🔍 <a href='{ozon_link}'>Искать этот же запрос на Ozon</a>"
         
