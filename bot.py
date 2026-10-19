@@ -11,108 +11,86 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 
-async def search_wildberries(query: str, limit: int = 8):
-    url = "https://search.wb.ru/exactmatch/ru/common/v18/search"
-    params = {
-        "query": query,
-        "resultset": "catalog",
-        "limit": limit,
-        "page": 1,
-        "appType": 1,
-        "curr": "rub",
-        "dest": -1257786,
-        "sort": "popular",
-        "spp": 30
+async def search_wikipedia(query: str):
+    # Сначала ищем статью
+    search_url = "https://ru.wikipedia.org/w/api.php"
+    search_params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "format": "json",
+        "utf8": 1,
+        "srlimit": 1
     }
-    
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "User-Agent": "TelegramBot/1.0"
     }
-    
+
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, headers=headers) as resp:
+        async with session.get(search_url, params=search_params, headers=headers) as resp:
             if resp.status != 200:
-                text = await resp.text()
-                raise Exception(f"{resp.status}: {text[:200]}")
+                return None
             data = await resp.json()
-            
-    products = data.get("data", {}).get("products", [])
-    results = []
-    
-    for p in products[:limit]:
-        price = p.get("salePriceU", p.get("priceU", 0)) // 100
-        old_price = p.get("priceU", 0) // 100
-        rating = p.get("reviewRating") or p.get("rating") or 0
-        feedbacks = p.get("feedbacks", 0)
-        name = p.get("name", "Без названия")
-        brand = p.get("brand", "")
-        article = p.get("id")
-        
-        link = f"https://www.wildberries.ru/catalog/{article}/detail.aspx"
-        
-        results.append({
-            "name": f"{brand} {name}".strip(),
-            "price": price,
-            "old_price": old_price if old_price > price else None,
-            "rating": rating,
-            "feedbacks": feedbacks,
-            "link": link
-        })
-    
-    return results
+
+        search_results = data.get("query", {}).get("search", [])
+        if not search_results:
+            return None
+
+        title = search_results[0]["title"]
+
+        # Получаем краткое описание
+        summary_url = f"https://ru.wikipedia.org/api/rest_v1/page/summary/{quote(title)}"
+        async with session.get(summary_url, headers=headers) as resp:
+            if resp.status != 200:
+                return None
+            summary_data = await resp.json()
+
+    return {
+        "title": summary_data.get("title", title),
+        "extract": summary_data.get("extract", "Описание отсутствует."),
+        "url": summary_data.get("content_urls", {}).get("desktop", {}).get("page", f"https://ru.wikipedia.org/wiki/{quote(title)}")
+    }
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "Привет! Я бот для поиска товаров на Wildberries и Ozon.\n\n"
-        "Просто напиши название товара, например:\n"
-        "<code>наушники sony</code>\n"
-        "<code>кроссовки nike</code>\n"
-        "<code>чехол iphone 15</code>",
-        parse_mode=ParseMode.HTML
+        "Привет! Я бот, который ищет ответы в русской Википедии.\n\n"
+        "Просто напиши любой вопрос или тему, например:\n"
+        "• Что такое чёрные дыры\n"
+        "• Пушкин\n"
+        "• История России\n\n"
+        "Я найду статью и пришлю краткое описание."
     )
 
 
 @dp.message(F.text)
-async def search_handler(message: types.Message):
+async def wiki_handler(message: types.Message):
     query = message.text.strip()
     if len(query) < 2:
         await message.answer("Слишком короткий запрос.")
         return
-    
-    wait_msg = await message.answer("Ищу товары...")
-    
+
+    wait_msg = await message.answer("Ищу в Википедии...")
+
     try:
-        products = await search_wildberries(query)
-        
-        if not products:
-            await wait_msg.edit_text("Ничего не нашёл на Wildberries.")
+        result = await search_wikipedia(query)
+
+        if not result:
+            await wait_msg.edit_text("Ничего не нашёл в русской Википедии по этому запросу.")
             return
-        
-        text = f"<b>Результаты поиска по запросу:</b> <code>{query}</code>\n\n"
-        
-        for i, p in enumerate(products, 1):
-            price_str = f"{p['price']} ₽"
-            if p['old_price']:
-                price_str = f"<s>{p['old_price']} ₽</s> → <b>{p['price']} ₽</b>"
-            
-            text += (
-                f"<b>{i}. {p['name']}</b>\n"
-                f"Цена: {price_str}\n"
-                f"Рейтинг: {p['rating']} ({p['feedbacks']} отзывов)\n"
-                f"<a href='{p['link']}'>Открыть на WB</a>\n\n"
-            )
-        
-        ozon_link = f"https://www.ozon.ru/search/?text={quote(query)}"
-        text += f"——————\n🔍 <a href='{ozon_link}'>Искать этот же запрос на Ozon</a>"
-        
-        await wait_msg.edit_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-        
+
+        text = (
+            f"<b>{result['title']}</b>\n\n"
+            f"{result['extract']}\n\n"
+            f"<a href='{result['url']}'>Читать полностью на Википедии</a>"
+        )
+
+        await wait_msg.edit_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
+
     except Exception as e:
-        await wait_msg.edit_text(f"Произошла ошибка при поиске: {e}")
+        await wait_msg.edit_text(f"Произошла ошибка: {e}")
 
 
 async def main():
