@@ -12,44 +12,42 @@ dp = Dispatcher()
 
 
 async def search_wikipedia(query: str):
-    # Сначала ищем статью
-    search_url = "https://ru.wikipedia.org/w/api.php"
-    search_params = {
-        "action": "query",
-        "list": "search",
-        "srsearch": query,
-        "format": "json",
-        "utf8": 1,
-        "srlimit": 1
-    }
-
     headers = {
-        "User-Agent": "TelegramBot/1.0"
+        "User-Agent": "TelegramWikiBot/1.0 (https://t.me/your_bot)"
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.get(search_url, params=search_params, headers=headers) as resp:
+        # Используем opensearch — он надёжнее
+        search_url = "https://ru.wikipedia.org/w/api.php"
+        params = {
+            "action": "opensearch",
+            "search": query,
+            "limit": 1,
+            "namespace": 0,
+            "format": "json"
+        }
+
+        async with session.get(search_url, params=params, headers=headers) as resp:
             if resp.status != 200:
                 return None
             data = await resp.json()
 
-        search_results = data.get("query", {}).get("search", [])
-        if not search_results:
+        if not data or len(data) < 2 or not data[1]:
             return None
 
-        title = search_results[0]["title"]
+        title = data[1][0]
 
         # Получаем краткое описание
         summary_url = f"https://ru.wikipedia.org/api/rest_v1/page/summary/{quote(title)}"
         async with session.get(summary_url, headers=headers) as resp:
             if resp.status != 200:
                 return None
-            summary_data = await resp.json()
+            summary = await resp.json()
 
     return {
-        "title": summary_data.get("title", title),
-        "extract": summary_data.get("extract", "Описание отсутствует."),
-        "url": summary_data.get("content_urls", {}).get("desktop", {}).get("page", f"https://ru.wikipedia.org/wiki/{quote(title)}")
+        "title": summary.get("title", title),
+        "extract": summary.get("extract", "Описание отсутствует."),
+        "url": summary.get("content_urls", {}).get("desktop", {}).get("page", "")
     }
 
 
@@ -57,11 +55,7 @@ async def search_wikipedia(query: str):
 async def cmd_start(message: types.Message):
     await message.answer(
         "Привет! Я бот, который ищет ответы в русской Википедии.\n\n"
-        "Просто напиши любой вопрос или тему, например:\n"
-        "• Что такое чёрные дыры\n"
-        "• Пушкин\n"
-        "• История России\n\n"
-        "Я найду статью и пришлю краткое описание."
+        "Просто напиши любой вопрос или тему."
     )
 
 
@@ -84,7 +78,7 @@ async def wiki_handler(message: types.Message):
         text = (
             f"<b>{result['title']}</b>\n\n"
             f"{result['extract']}\n\n"
-            f"<a href='{result['url']}'>Читать полностью на Википедии</a>"
+            f"<a href='{result['url']}'>Читать полностью</a>"
         )
 
         await wait_msg.edit_text(text, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
